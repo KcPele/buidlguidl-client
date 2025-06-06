@@ -5,8 +5,11 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
 import { initializeMonitoring } from "./monitor.js";
-import { installMacLinuxClient } from "./ethereum_client_scripts/install.js";
+import { installMacLinuxClient, installPrometheus, installGrafana } from "./ethereum_client_scripts/install.js";
 import { initializeWebSocketConnection } from "./web_socket_connection/webSocketConnection.js";
+import { generatePrometheusConfig } from "./generatePrometheusConfig.js";
+import { generateGrafanaProvisioning } from "./generateGrafanaProvisioning.js";
+import MetricsExporter from "./metricsExporter.js";
 import {
   executionClient,
   executionType,
@@ -16,6 +19,9 @@ import {
   consensusCheckpoint,
   installDir,
   owner,
+  enableMetrics,
+  prometheusPort,
+  grafanaPort,
   saveOptionsToFile,
   deleteOptionsFile,
 } from "./commandLineOptions.js";
@@ -53,9 +59,14 @@ function createJwtSecret(jwtDir) {
 
 let executionChild;
 let consensusChild;
+let prometheusChild;
+let grafanaChild;
+let metricsExporter;
 
 let executionExited = false;
 let consensusExited = false;
+let prometheusExited = false;
+let grafanaExited = false;
 
 let isExiting = false;
 
@@ -64,16 +75,21 @@ function handleExit(exitType) {
 
   // Check if the current process PID matches the one in the lockfile
   try {
-    const lockFilePid = fs.readFileSync(lockFilePath, "utf8");
-    if (parseInt(lockFilePid) !== process.pid) {
-      console.log(
-        `This client process (${process.pid}) is not the first instance launched. Closing dashboard view without killing clients.`
-      );
-      process.exit(0);
+    if (fs.existsSync(lockFilePath)) {
+      const lockFilePid = fs.readFileSync(lockFilePath, "utf8");
+      if (parseInt(lockFilePid) !== process.pid) {
+        console.log(
+          `This client process (${process.pid}) is not the first instance launched. Closing dashboard view without killing clients.`
+        );
+        process.exit(0);
+      }
+    } else {
+      // No lock file exists, this is likely a crash scenario
+      debugToFile("Lock file does not exist during exit, proceeding with cleanup");
     }
   } catch (error) {
-    console.error("Error reading lockfile:", error);
-    process.exit(1);
+    debugToFile(`Error reading lockfile during exit: ${error.message}`);
+    // Continue with cleanup even if we can't read the lock file
   }
 
   isExiting = true;
@@ -84,10 +100,11 @@ function handleExit(exitType) {
   debugToFile(`handleExit(): deleteOptionsFile() has been called`);
 
   try {
-    // Check if both child processes have exited
+    // Check if all child processes have exited
     const checkExit = () => {
-      if (executionExited && consensusExited) {
-        console.log("\n👍 Both clients exited!");
+      const metricsProcessesExited = !enableMetrics || (prometheusExited && grafanaExited);
+      if (executionExited && consensusExited && metricsProcessesExited) {
+        console.log("\n👍 All processes exited!");
         removeLockFile();
         process.exit(0);
       }
@@ -129,6 +146,42 @@ function handleExit(exitType) {
       }
     };
 
+    // Handle prometheus exit
+    const handlePrometheusExit = (code) => {
+      if (!prometheusExited) {
+        prometheusExited = true;
+        console.log(`🫡 Prometheus exited with code ${code}`);
+        checkExit();
+      }
+    };
+
+    // Handle prometheus close
+    const handlePrometheusClose = (code) => {
+      if (!prometheusExited) {
+        prometheusExited = true;
+        console.log(`🫡 Prometheus closed with code ${code}`);
+        checkExit();
+      }
+    };
+
+    // Handle grafana exit
+    const handleGrafanaExit = (code) => {
+      if (!grafanaExited) {
+        grafanaExited = true;
+        console.log(`🫡 Grafana exited with code ${code}`);
+        checkExit();
+      }
+    };
+
+    // Handle grafana close
+    const handleGrafanaClose = (code) => {
+      if (!grafanaExited) {
+        grafanaExited = true;
+        console.log(`🫡 Grafana closed with code ${code}`);
+        checkExit();
+      }
+    };
+
     // Ensure event listeners are set before killing the processes
     if (executionChild && !executionExited) {
       executionChild.on("exit", handleExecutionExit);
@@ -142,6 +195,25 @@ function handleExit(exitType) {
       consensusChild.on("close", handleConsensusClose);
     } else {
       consensusExited = true;
+    }
+
+    if (enableMetrics) {
+      if (prometheusChild && !prometheusExited) {
+        prometheusChild.on("exit", handlePrometheusExit);
+        prometheusChild.on("close", handlePrometheusClose);
+      } else {
+        prometheusExited = true;
+      }
+
+      if (grafanaChild && !grafanaExited) {
+        grafanaChild.on("exit", handleGrafanaExit);
+        grafanaChild.on("close", handleGrafanaClose);
+      } else {
+        grafanaExited = true;
+      }
+    } else {
+      prometheusExited = true;
+      grafanaExited = true;
     }
 
     // Send the kill signals after setting the event listeners
@@ -159,14 +231,36 @@ function handleExit(exitType) {
       }, 750);
     }
 
-    // Initial check in case both children are already not running
+    if (enableMetrics) {
+      if (prometheusChild && !prometheusExited) {
+        console.log("⌛️ Exiting Prometheus...");
+        setTimeout(() => {
+          prometheusChild.kill("SIGTERM");
+        }, 750);
+      }
+
+      if (grafanaChild && !grafanaExited) {
+        console.log("⌛️ Exiting Grafana...");
+        setTimeout(() => {
+          grafanaChild.kill("SIGTERM");
+        }, 750);
+      }
+
+      if (metricsExporter) {
+        console.log("⌛️ Stopping metrics exporter...");
+        metricsExporter.stop();
+      }
+    }
+
+    // Initial check in case all children are already not running
     checkExit();
 
-    // Periodically check if both child processes have exited
+    // Periodically check if all child processes have exited
     const intervalId = setInterval(() => {
       checkExit();
-      // Clear interval if both clients have exited
-      if (executionExited && consensusExited) {
+      // Clear interval if all processes have exited
+      const metricsProcessesExited = !enableMetrics || (prometheusExited && grafanaExited);
+      if (executionExited && consensusExited && metricsProcessesExited) {
         clearInterval(intervalId);
       }
     }, 1000);
@@ -255,6 +349,12 @@ async function startClient(clientName, executionType, installDir) {
       __dirname,
       "ethereum_client_scripts/lighthouse.js"
     );
+  } else if (clientName === "prometheus") {
+    clientArgs.push("--prometheusport", prometheusPort);
+    clientCommand = path.join(__dirname, "ethereum_client_scripts/prometheus.js");
+  } else if (clientName === "grafana") {
+    clientArgs.push("--grafanaport", grafanaPort);
+    clientCommand = path.join(__dirname, "ethereum_client_scripts/grafana.js");
   } else {
     clientCommand = path.join(
       installDir,
@@ -276,6 +376,10 @@ async function startClient(clientName, executionType, installDir) {
     executionChild = child;
   } else if (clientName === "prysm" || clientName === "lighthouse") {
     consensusChild = child;
+  } else if (clientName === "prometheus") {
+    prometheusChild = child;
+  } else if (clientName === "grafana") {
+    grafanaChild = child;
   }
 
   child.on("exit", (code) => {
@@ -284,6 +388,10 @@ async function startClient(clientName, executionType, installDir) {
       executionExited = true;
     } else if (clientName === "prysm" || clientName === "lighthouse") {
       consensusExited = true;
+    } else if (clientName === "prometheus") {
+      prometheusExited = true;
+    } else if (clientName === "grafana") {
+      grafanaExited = true;
     }
   });
 
@@ -337,6 +445,11 @@ const platform = os.platform();
 if (["darwin", "linux"].includes(platform)) {
   installMacLinuxClient(executionClient, platform);
   installMacLinuxClient(consensusClient, platform);
+  
+  if (enableMetrics) {
+    installPrometheus(platform);
+    installGrafana(platform);
+  }
 }
 // } else if (platform === "win32") {
 //   installWindowsExecutionClient(executionClient);
@@ -364,6 +477,27 @@ if (!isAlreadyRunning()) {
 
   await startClient(executionClient, executionType, installDir);
   await startClient(consensusClient, executionType, installDir);
+
+  if (enableMetrics) {
+    // Start metrics exporter
+    metricsExporter = new MetricsExporter(9100);
+    metricsExporter.start();
+    
+    // Generate Prometheus config
+    generatePrometheusConfig();
+    
+    // Generate Grafana provisioning
+    generateGrafanaProvisioning();
+    
+    // Start Prometheus and Grafana
+    await startClient("prometheus", executionType, installDir);
+    await startClient("grafana", executionType, installDir);
+    
+    console.log("\n📊 Metrics enabled:");
+    console.log(`   Prometheus: http://localhost:${prometheusPort}`);
+    console.log(`   Grafana: http://localhost:${grafanaPort} (admin/admin)`);
+    console.log(`   Custom metrics: http://localhost:9100/metrics\n`);
+  }
 
   if (owner !== null) {
     initializeWebSocketConnection(wsConfig);

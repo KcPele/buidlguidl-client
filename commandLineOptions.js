@@ -30,6 +30,9 @@ let executionPeerPort = 30303;
 let consensusPeerPorts = [null, null];
 let consensusCheckpoint = null;
 let owner = null;
+let enableMetrics = false;
+let prometheusPort = 9090;
+let grafanaPort = 3000;
 
 const filename = fileURLToPath(import.meta.url);
 let installDir = dirname(filename);
@@ -80,6 +83,17 @@ function showHelp() {
     "  -o, --owner <eth address>                 Specify a owner eth address to opt in to the points system and distributed RPC network\n"
   );
   console.log(
+    "      --enable-metrics                      Enable Prometheus metrics collection and Grafana dashboards\n"
+  );
+  console.log(
+    "      --prometheus-port <port>              Specify the Prometheus server port"
+  );
+  console.log("                                            Default: 9090\n");
+  console.log(
+    "      --grafana-port <port>                 Specify the Grafana server port"
+  );
+  console.log("                                            Default: 3000\n");
+  console.log(
     "      --update                              Update the execution and consensus clients to the latest version."
   );
   console.log(
@@ -109,6 +123,9 @@ function saveOptionsToFile() {
     consensusCheckpoint,
     installDir,
     owner,
+    enableMetrics,
+    prometheusPort,
+    grafanaPort,
   };
   fs.writeFileSync(optionsFilePath, JSON.stringify(options), "utf8");
 }
@@ -135,6 +152,9 @@ if (fs.existsSync(optionsFilePath)) {
     consensusCheckpoint = options.consensusCheckpoint;
     installDir = options.installDir;
     owner = options.owner;
+    enableMetrics = options.enableMetrics || false;
+    prometheusPort = options.prometheusPort || 9090;
+    grafanaPort = options.grafanaPort || 3000;
     optionsLoaded = true;
   } catch (error) {
     debugToFile(`Failed to load options from file: ${error}`);
@@ -178,6 +198,8 @@ if (!optionsLoaded) {
       "directory",
       "o",
       "owner",
+      "prometheus-port",
+      "grafana-port",
     ],
     alias: {
       e: "executionclient",
@@ -186,7 +208,7 @@ if (!optionsLoaded) {
       o: "owner",
       h: "help",
     },
-    boolean: ["h", "help", "update", "archive"],
+    boolean: ["h", "help", "update", "archive", "enable-metrics"],
     unknown: (option) => {
       console.log(`Invalid option: ${option}`);
       showHelp();
@@ -258,6 +280,30 @@ if (!optionsLoaded) {
 
   if (argv.owner) {
     owner = argv.owner;
+  }
+
+  if (argv["enable-metrics"]) {
+    enableMetrics = true;
+  }
+
+  if (argv["prometheus-port"]) {
+    prometheusPort = parseInt(argv["prometheus-port"], 10);
+    if (isNaN(prometheusPort)) {
+      console.log(
+        "Invalid option for --prometheus-port. Must be a number."
+      );
+      process.exit(1);
+    }
+  }
+
+  if (argv["grafana-port"]) {
+    grafanaPort = parseInt(argv["grafana-port"], 10);
+    if (isNaN(grafanaPort)) {
+      console.log(
+        "Invalid option for --grafana-port. Must be a number."
+      );
+      process.exit(1);
+    }
   }
 
   if (argv.update) {
@@ -343,6 +389,9 @@ export {
   consensusCheckpoint,
   installDir,
   owner,
+  enableMetrics,
+  prometheusPort,
+  grafanaPort,
   saveOptionsToFile,
   deleteOptionsFile,
 };

@@ -8,6 +8,8 @@ import { debugToFile } from "./../helpers.js";
 export const latestGethVer = "1.15.11";
 export const latestRethVer = "1.4.3";
 export const latestLighthouseVer = "7.0.1";
+export const latestPrometheusVer = "3.4.1";
+export const latestGrafanaVer = "12.0.1";
 
 export function installMacLinuxClient(clientName, platform) {
   const arch = os.arch();
@@ -204,4 +206,157 @@ function compareVersions(v1, v2) {
   }
 
   return 0;
+}
+
+export function installPrometheus(platform) {
+  const arch = os.arch();
+  
+  const prometheusConfigs = {
+    darwin: {
+      x64: `prometheus-${latestPrometheusVer}.darwin-amd64`,
+      arm64: `prometheus-${latestPrometheusVer}.darwin-arm64`,
+    },
+    linux: {
+      x64: `prometheus-${latestPrometheusVer}.linux-amd64`,
+      arm64: `prometheus-${latestPrometheusVer}.linux-arm64`,
+    },
+  };
+  
+  const fileName = prometheusConfigs[platform][arch];
+  const prometheusDir = path.join(installDir, "ethereum_clients", "prometheus");
+  const prometheusBinary = path.join(prometheusDir, "prometheus");
+  
+  if (!fs.existsSync(prometheusBinary)) {
+    console.log("\nInstalling Prometheus.");
+    
+    // Clean up any existing prometheus files first
+    if (fs.existsSync(prometheusDir)) {
+      execSync(`rm -rf "${prometheusDir}"`, { stdio: "inherit" });
+    }
+    
+    // Create fresh prometheus directory
+    console.log(`Creating '${prometheusDir}'`);
+    fs.mkdirSync(`${prometheusDir}/data`, { recursive: true });
+    fs.mkdirSync(`${prometheusDir}/logs`, { recursive: true });
+    
+    const downloadUrl = `https://github.com/prometheus/prometheus/releases/download/v${latestPrometheusVer}/${fileName}.tar.gz`;
+    
+    console.log("Downloading Prometheus.");
+    execSync(
+      `cd "${prometheusDir}" && curl -L -O -# ${downloadUrl}`,
+      { stdio: "inherit" }
+    );
+    console.log("Uncompressing Prometheus.");
+    execSync(`cd "${prometheusDir}" && tar -xzvf "${fileName}.tar.gz"`, {
+      stdio: "inherit",
+    });
+    
+    // Check what was extracted and move files appropriately
+    const extractedDir = path.join(prometheusDir, fileName);
+    
+    if (fs.existsSync(extractedDir)) {
+      console.log(`Moving files from ${fileName} to prometheus directory`);
+      
+      // Move all files from extracted directory to prometheus root
+      execSync(`cd "${extractedDir}" && find . -maxdepth 1 -type f -exec mv {} .. \\;`, {
+        stdio: "inherit",
+      });
+      
+      // Move directories if they exist
+      const dirsToMove = ["console_libraries", "consoles"];
+      for (const dir of dirsToMove) {
+        if (fs.existsSync(path.join(extractedDir, dir))) {
+          execSync(`cd "${extractedDir}" && mv ${dir} ..`, {
+            stdio: "inherit",
+          });
+        }
+      }
+      
+      // Clean up extracted directory and archive
+      execSync(`cd "${prometheusDir}" && rm -rf "${fileName}" "${fileName}.tar.gz"`, {
+        stdio: "inherit",
+      });
+    } else {
+      console.log("Warning: Extracted directory not found, checking for binaries in root");
+    }
+    
+    // Verify installation
+    if (fs.existsSync(prometheusBinary)) {
+      console.log("Prometheus installation completed successfully.");
+    } else {
+      throw new Error("Prometheus binary not found after installation");
+    }
+  } else {
+    console.log("Prometheus is already installed.");
+  }
+}
+
+export function installGrafana(platform) {
+  const arch = os.arch();
+  
+  const grafanaConfigs = {
+    darwin: {
+      x64: `grafana-${latestGrafanaVer}.darwin-amd64`,
+      arm64: `grafana-${latestGrafanaVer}.darwin-arm64`,
+    },
+    linux: {
+      x64: `grafana-${latestGrafanaVer}.linux-amd64`,
+      arm64: `grafana-${latestGrafanaVer}.linux-arm64`,
+    },
+  };
+  
+  const fileName = grafanaConfigs[platform][arch];
+  const grafanaDir = path.join(installDir, "ethereum_clients", "grafana");
+  const grafanaBinary = path.join(grafanaDir, "bin", "grafana-server");
+  
+  if (!fs.existsSync(grafanaBinary)) {
+    console.log("\nInstalling Grafana.");
+    
+    // Remove any existing grafana files/directories first
+    const ethClientsDir = path.join(installDir, "ethereum_clients");
+    execSync(`cd "${ethClientsDir}" && rm -rf grafana grafana-*`, {
+      stdio: "inherit",
+    });
+    
+    const downloadUrl = `https://dl.grafana.com/oss/release/${fileName}.tar.gz`;
+    
+    console.log("Downloading Grafana.");
+    execSync(
+      `cd "${ethClientsDir}" && curl -L -O -# ${downloadUrl}`,
+      { stdio: "inherit" }
+    );
+    console.log("Uncompressing Grafana.");
+    execSync(`cd "${ethClientsDir}" && tar -xzvf "${fileName}.tar.gz"`, {
+      stdio: "inherit",
+    });
+    
+    // Find the extracted directory (Grafana extracts with different naming)
+    const extractedDirs = fs.readdirSync(ethClientsDir)
+      .filter(name => name.startsWith('grafana-') && fs.statSync(path.join(ethClientsDir, name)).isDirectory());
+    
+    if (extractedDirs.length > 0) {
+      const extractedDir = extractedDirs[0];
+      console.log(`Moving ${extractedDir} to grafana`);
+      
+      // Move extracted directory to grafana  
+      execSync(`cd "${ethClientsDir}" && mv "${extractedDir}" grafana`, {
+        stdio: "inherit",
+      });
+      
+      // Create required directories after moving
+      fs.mkdirSync(path.join(grafanaDir, "data"), { recursive: true });
+      fs.mkdirSync(path.join(grafanaDir, "logs"), { recursive: true });
+      
+      console.log("Grafana installation completed.");
+    } else {
+      throw new Error("Could not find extracted Grafana directory");
+    }
+    
+    console.log("Cleaning up Grafana archive.");
+    execSync(`cd "${ethClientsDir}" && rm -f "${fileName}.tar.gz"`, {
+      stdio: "inherit",
+    });
+  } else {
+    console.log("Grafana is already installed.");
+  }
 }

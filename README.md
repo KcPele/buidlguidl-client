@@ -94,6 +94,37 @@ Pass the --update option to update the execution and consensus clients to the la
 &nbsp;
 &nbsp;
 
+## Metrics and Monitoring
+
+Enable Prometheus metrics collection and Grafana dashboards with the --enable-metrics flag:
+  ```bash
+  node index.js --enable-metrics
+  ```
+
+This will start:
+- **Prometheus server** on port 9090 (configurable with --prometheus-port)
+- **Grafana dashboard** on port 3000 (configurable with --grafana-port) 
+- **Custom metrics exporter** on port 9100
+
+Access the monitoring tools:
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000 (login: admin/admin)
+- Custom metrics: http://localhost:9100/metrics
+
+The system automatically:
+- Installs and configures Prometheus and Grafana
+- Enables metrics collection on all Ethereum clients (Geth, Reth, Lighthouse, Prysm)
+- Creates a default dashboard showing system resources, peer counts, sync progress, and bandwidth
+- Provides a unified view of all metrics through the Prometheus API at http://localhost:9090/metrics
+
+Custom port configuration:
+  ```bash
+  node index.js --enable-metrics --prometheus-port 9091 --grafana-port 3001
+  ```
+
+&nbsp;
+&nbsp;
+
 Use the --help (-h) option to see all command line options:
   ```bash
   node index.js --help
@@ -120,6 +151,14 @@ Use the --help (-h) option to see all command line options:
                                             Default: buidlguidl-client/ethereum_clients
 
   -o, --owner <eth address>                 Specify a owner eth address to opt in to the points system and distributed RPC network
+
+      --enable-metrics                      Enable Prometheus metrics collection and Grafana dashboards
+
+      --prometheus-port <port>              Specify the Prometheus server port
+                                            Default: 9090
+
+      --grafana-port <port>                 Specify the Grafana server port
+                                            Default: 3000
 
       --update                              Update the execution and consensus clients to the latest version.
                                             Latest versions: Reth: 1.0.0, Geth: 1.14.12, Lighthouse: 5.3.0, (Prysm is handled by its executable automatically)
