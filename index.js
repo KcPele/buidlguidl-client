@@ -9,7 +9,6 @@ import { installMacLinuxClient, installPrometheus, installGrafana } from "./ethe
 import { initializeWebSocketConnection } from "./web_socket_connection/webSocketConnection.js";
 import { generatePrometheusConfig } from "./generatePrometheusConfig.js";
 import { generateGrafanaProvisioning } from "./generateGrafanaProvisioning.js";
-import MetricsExporter from "./metricsExporter.js";
 import {
   executionClient,
   executionType,
@@ -61,7 +60,6 @@ let executionChild;
 let consensusChild;
 let prometheusChild;
 let grafanaChild;
-let metricsExporter;
 
 let executionExited = false;
 let consensusExited = false;
@@ -246,10 +244,6 @@ function handleExit(exitType) {
         }, 750);
       }
 
-      if (metricsExporter) {
-        console.log("⌛️ Stopping metrics exporter...");
-        metricsExporter.stop();
-      }
     }
 
     // Initial check in case all children are already not running
@@ -479,10 +473,6 @@ if (!isAlreadyRunning()) {
   await startClient(consensusClient, executionType, installDir);
 
   if (enableMetrics) {
-    // Start metrics exporter
-    metricsExporter = new MetricsExporter(9100);
-    metricsExporter.start();
-    
     // Generate Prometheus config
     generatePrometheusConfig();
     
@@ -495,8 +485,7 @@ if (!isAlreadyRunning()) {
     
     console.log("\n📊 Metrics enabled:");
     console.log(`   Prometheus: http://localhost:${prometheusPort}`);
-    console.log(`   Grafana: http://localhost:${grafanaPort} (admin/admin)`);
-    console.log(`   Custom metrics: http://localhost:9100/metrics\n`);
+    console.log(`   Grafana: http://localhost:${grafanaPort} (admin/admin)\n`);
   }
 
   if (owner !== null) {
